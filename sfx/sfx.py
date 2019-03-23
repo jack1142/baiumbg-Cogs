@@ -20,7 +20,8 @@ class SFX(commands.Cog):
         self.sound_base = (data_manager.cog_data_path(self) / 'sounds').as_posix()
         self.session = aiohttp.ClientSession()
         default_config = {
-            'padding': 700,
+            'padding_left': 700,
+            'padding_right': 700,
             'tts_lang': 'en',
             'sounds': {}
         }
@@ -49,7 +50,8 @@ class SFX(commands.Cog):
             return
 
         cfg_tts_lang = await self.config.guild(ctx.guild).tts_lang()
-        cfg_padding = await self.config.guild(ctx.guild).padding()
+        cfg_padding_left = await self.config.guild(ctx.guild).padding_left()
+        cfg_padding_right = await self.config.guild(ctx.guild).padding_right()
         lang = cfg_tts_lang
         try:
             lang, text = text.split(' ', maxsplit=1)
@@ -63,8 +65,9 @@ class SFX(commands.Cog):
         audio_file = os.path.join(tempfile.gettempdir(), ''.join(random.choice('0123456789ABCDEF') for i in range(12)) + '.mp3')
         tts_audio.save(audio_file)
         audio_data = pydub.AudioSegment.from_mp3(audio_file)
-        silence = pydub.AudioSegment.silent(duration=cfg_padding)
-        padded_audio = silence + audio_data + silence
+        silence_left = pydub.AudioSegment.silent(duration=cfg_padding_left)
+        silence_right = pydub.AudioSegment.silent(duration=cfg_padding_right)
+        padded_audio = silence_left + audio_data + silence_right
         padded_audio.export(audio_file, format='mp3')
         await self._play_sfx(ctx.author.voice.channel, audio_file, True)
 
@@ -99,25 +102,47 @@ class SFX(commands.Cog):
 
     @sfxconfig.command(usage='<duration>')
     @checks.mod()
-    async def padding(self, ctx, padding: int = None):
+    async def padding_left(self, ctx, padding: int = None):
         """
-        Configures the default padding.
+        Configures the default left padding.
 
         Gets/sets the default duration of padding (in ms) for the `[p]tts` and `[p]addsfx` commands.
-        Adjust if the sound gets cut off at the beginning or the end.
+        Adjust if the sound gets cut off at the beginning.
 
         Warning: Sounds do not get affected immediately. You have to re-add them for this to have an effect on them.
         TTS gets affected immediately.
         """
 
-        cfg_padding = await self.config.guild(ctx.guild).padding()
+        cfg_padding_left = await self.config.guild(ctx.guild).padding_left()
         if padding is None:
-            await ctx.send(f"Current value of `padding`: {cfg_padding}")
+            await ctx.send(f"Current value of `padding_left`: {cfg_padding_left}")
             return
 
-        cfg_padding = padding
-        await self.config.guild(ctx.guild).padding.set(cfg_padding)
-        await ctx.send(f'`padding` set to {padding}.')
+        cfg_padding_left = padding
+        await self.config.guild(ctx.guild).padding_left.set(cfg_padding_left)
+        await ctx.send(f'`padding_left` set to {padding}.')
+
+    @sfxconfig.command(usage='<duration>')
+    @checks.mod()
+    async def padding_right(self, ctx, padding: int = None):
+        """
+        Configures the default right padding.
+
+        Gets/sets the default duration of padding (in ms) for the `[p]tts` and `[p]addsfx` commands.
+        Adjust if the sound gets cut off at the end.
+
+        Warning: Sounds do not get affected immediately. You have to re-add them for this to have an effect on them.
+        TTS gets affected immediately.
+        """
+
+        cfg_padding_right = await self.config.guild(ctx.guild).padding_right()
+        if padding is None:
+            await ctx.send(f"Current value of `padding_right`: {cfg_padding_right}")
+            return
+
+        cfg_padding_right = padding
+        await self.config.guild(ctx.guild).padding_right.set(cfg_padding_right)
+        await ctx.send(f'`padding_right` set to {padding}.')
 
     @commands.command()
     @commands.cooldown(rate=1, per=2, type=discord.ext.commands.cooldowns.BucketType.guild)
@@ -167,7 +192,8 @@ class SFX(commands.Cog):
         `[p]addsfx <name>`, or use `[p]addsfx <name> <direct-URL-to-file>`.
         """
         cfg_sounds = await self.config.guild(ctx.guild).sounds()
-        cfg_padding = await self.config.guild(ctx.guild).padding()
+        cfg_padding_left = await self.config.guild(ctx.guild).padding_left()
+        cfg_padding_right = await self.config.guild(ctx.guild).padding_right()
 
         if str(ctx.guild.id) not in os.listdir(self.sound_base):
             os.makedirs(os.path.join(self.sound_base, str(ctx.guild.id)))
@@ -212,8 +238,9 @@ class SFX(commands.Cog):
             f.close()
 
         audio_data = pydub.AudioSegment.from_file(filepath, format=file_extension[1:])
-        silence = pydub.AudioSegment.silent(duration=cfg_padding)
-        padded_audio = silence + audio_data + silence
+        silence_left = pydub.AudioSegment.silent(duration=cfg_padding_left)
+        silence_right = pydub.AudioSegment.silent(duration=cfg_padding_right)
+        padded_audio = silence_left + audio_data + silence_right
         padded_audio.export(filepath, format=file_extension[1:])
 
         cfg_sounds[name] = filename
