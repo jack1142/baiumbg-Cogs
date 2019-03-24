@@ -8,6 +8,7 @@ import random
 import lavalink
 import pydub
 import aiohttp
+from collections import deque
 
 class SFX(commands.Cog):
     """Plays uploaded sounds or text-to-speech using gTTS."""
@@ -15,14 +16,15 @@ class SFX(commands.Cog):
     def __init__(self):
         self.tts_languages = list(gtts.lang.tts_langs().keys())
         self.last_track_info = None
-        self.current_sfx = None
+        self.sfx_queue = deque()
         self.config = Config.get_conf(self, identifier=134621854878007296)
         self.sound_base = (data_manager.cog_data_path(self) / 'sounds').as_posix()
         self.session = aiohttp.ClientSession()
         default_config = {
             'padding': 700,
             'tts_lang': 'en',
-            'sounds': {}
+            'sounds': {},
+            'replace_sfx': True
         }
         self.config.register_guild(**default_config)
         lavalink.register_event_listener(self.ll_check)
@@ -72,6 +74,25 @@ class SFX(commands.Cog):
     async def sfxconfig(self, ctx):
         """Configures the SFX cog."""
         pass
+
+    @sfxconfig.command(usage='[language code]')
+    @checks.mod()
+    async def replace_sfx(self, ctx):
+        """
+        Configures if bot should replace current sfx with new one or append it to queue,
+        when some sfx is already playing.
+
+        This affects both `[p]tts` and `[p]sfx` commands
+        """
+
+        cfg_replace_sfx = await self.config.guild(ctx.guild).replace_sfx()
+
+        if cfg_replace_sfx:
+            await self.config.guild(ctx.guild).replace_sfx.set(False)
+            await ctx.send('Bot will now append sfx to queue, when some sfx is already playing.')
+        else:
+            await self.config.guild(ctx.guild).replace_sfx.set(True)
+            await ctx.send('Bot will now replace current sfx with new one, when some sfx is already playing.')
 
     @sfxconfig.command(usage='[language code]')
     @checks.mod()
@@ -296,52 +317,55 @@ class SFX(commands.Cog):
 
         if player.current is None:
             player.queue.append(track)
-            self.current_sfx = (track, is_tts)
+            self.sfx_queue.append((track, is_tts))
             await player.play()
             return
 
-        if self.current_sfx is not None:
+        if self.sfx_queue:
             player.queue.insert(0, track)
-            await player.skip()
-            if self.current_sfx[1]:
-                os.remove(self.current_sfx[0].uri)
-            self.current_sfx = (track, is_tts)
+            if await self.config.guild(vc.guild).replace_sfx():
+                await player.skip()
+                if self.sfx_queue[0][1]:
+                    os.remove(self.sfx_queue[0][0].uri)
+                self.sfx_queue.popleft()
+            self.sfx_queue.append((track, is_tts))
             return
 
         self.last_track_info = (player.current, player.position)
-        self.current_sfx = (track, is_tts)
+        self.sfx_queue.append((track, is_tts))
         player.queue.insert(0, track)
         player.queue.insert(1, player.current)
         await player.skip()
 
     async def ll_check(self, player, event, reason):
-        if self.current_sfx is None and self.last_track_info is None:
+        if not self.sfx_queue and self.last_track_info is None:
             return
 
-        if event == lavalink.LavalinkEvents.TRACK_EXCEPTION and self.current_sfx is not None:
-            if self.current_sfx[1]:
-                os.remove(self.current_sfx[0].uri)
-            self.current_sfx = None
+        if event == lavalink.LavalinkEvents.TRACK_EXCEPTION and self.sfx_queue:
+            if self.sfx_queue[0][1]:
+                os.remove(self.sfx_queue[0][0].uri)
+            self.sfx_queue.popleft()
             return
 
-        if event == lavalink.LavalinkEvents.TRACK_STUCK and self.current_sfx is not None:
-            if self.current_sfx[1]:
-                os.remove(self.current_sfx[0].uri)
-            self.current_sfx = None
+        if event == lavalink.LavalinkEvents.TRACK_STUCK and self.sfx_queue:
+            if self.sfx_queue[0][1]:
+                os.remove(self.sfx_queue[0][0].uri)
+            self.sfx_queue.popleft()
             await player.skip()
             return
 
-        if event == lavalink.LavalinkEvents.TRACK_END and player.current is None and self.current_sfx is not None:
-            if self.current_sfx[1]:
-                os.remove(self.current_sfx[0].uri)
-            self.current_sfx = None
-            return
+        if event == lavalink.LavalinkEvents.TRACK_END and self.sfx_queue:
+            if self.sfx_queue[0][1]:
+                os.remove(self.sfx_queue[0][0].uri)
+            self.sfx_queue.popleft()
 
-        if event == lavalink.LavalinkEvents.TRACK_END and player.current.track_identifier == self.last_track_info[0].track_identifier:
+        if (
+            event == lavalink.LavalinkEvents.TRACK_END
+            and not self.sfx_queue
+            and player.current is not None
+            and player.current.track_identifier == self.last_track_info[0].track_identifier
+        ):
             print(str(self.last_track_info[0].uri))
-            if self.current_sfx[1]:
-                os.remove(self.current_sfx[0].uri)
-            self.current_sfx = None
             await player.pause()
             await player.seek(self.last_track_info[1])
             await player.pause(False)
